@@ -1,4 +1,4 @@
-# 🎫 AI Ticket Triage Checkpoint 01
+# 🎫 AI Ticket Triage 
 
 An AI workflow that classifies support tickets, validates the model's output, routes risky/uncertain cases to a human, and never takes an autonomous customer-facing action.
 
