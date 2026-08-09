@@ -1,0 +1,218 @@
+{
+  "name": "Checkpoint 01 - Ticket Triage v0 (OpenRouter, Happy Path)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "1a1e1f10-0001-4a11-9a11-000000000001",
+      "name": "01 Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        0
+      ],
+      "notes": "Manual trigger first; webhook after it works."
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "aaaa0001",
+              "name": "request_id",
+              "value": "REQ-1001",
+              "type": "string"
+            },
+            {
+              "id": "aaaa0002",
+              "name": "received_at",
+              "value": "={{$now.toISO()}}",
+              "type": "string"
+            },
+            {
+              "id": "aaaa0003",
+              "name": "message",
+              "value": "I was charged twice this month for my subscription.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1a1e1f10-0002-4a11-9a11-000000000002",
+      "name": "02 Set fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -180,
+        0
+      ],
+      "notes": "request_id, received_at, message."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "content-type", "value": "application/json" },
+            { "name": "HTTP-Referer", "value": "https://n8n.local" },
+            { "name": "X-Title", "value": "Checkpoint01-Ticket-Triage" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"anthropic/claude-sonnet-4.5\",\n  \"max_tokens\": 300,\n  \"messages\": [\n    { \"role\": \"system\", \"content\": \"JOB: Classify one support ticket into a routing decision.\\nCONTEXT: The ticket is a single free-text customer message. Allowed categories are billing, technical, account, spam, other.\\nRULES: Return ONLY valid JSON, no markdown fences, no prose. Never invent a category outside the allowed list. Prefer lower confidence over guessing.\\nTOOLS: None. Classification only, no external action.\\nOUTPUT: {\\\"category\\\": \\\"billing|technical|account|spam|other\\\", \\\"confidence\\\": <0.0-1.0>, \\\"summary\\\": \\\"<short line>\\\", \\\"risk\\\": \\\"low|medium|high\\\", \\\"needs_human\\\": <boolean>}\\nCHECK: Must parse as valid JSON, category from allowed list, confidence 0-1, summary non-empty.\" },\n    { \"role\": \"user\", \"content\": {{JSON.stringify($json.message)}} }\n  ]\n}",
+        "options": {}
+      },
+      "id": "1a1e1f10-0003-4a11-9a11-000000000003",
+      "name": "03 LLM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        40,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "OpenRouter (OpenAI-compatible /chat/completions). Contract prompt sent as system message. Credential: HTTP Header Auth, header name 'Authorization', value 'Bearer YOUR_OPENROUTER_KEY'. Swap 'model' to whichever OpenRouter model slug you have access to."
+    },
+    {
+      "parameters": {
+        "jsCode": "// 04 Parse + validate\n// Required keys, confidence 0-1, known category.\nconst raw = $input.first().json;\nconst fields = $('02 Set fields').first().json;\n\nlet modelText = '';\ntry {\n  modelText = raw.choices[0].message.content;\n} catch (e) {\n  throw new Error('Unexpected API response shape - no choices[0].message.content found');\n}\n\nlet parsed;\ntry {\n  parsed = JSON.parse(modelText);\n} catch (e) {\n  throw new Error('Model did not return valid JSON: ' + modelText);\n}\n\nconst requiredKeys = ['category', 'confidence', 'summary', 'risk', 'needs_human'];\nfor (const key of requiredKeys) {\n  if (!(key in parsed)) {\n    throw new Error('Missing required key: ' + key);\n  }\n}\n\nconst allowedCategories = ['billing', 'technical', 'account', 'spam', 'other'];\nconst allowedRisk = ['low', 'medium', 'high'];\n\nif (!allowedCategories.includes(parsed.category)) {\n  throw new Error('category not in allowed list: ' + parsed.category);\n}\nif (typeof parsed.confidence !== 'number' || parsed.confidence < 0 || parsed.confidence > 1) {\n  throw new Error('confidence out of range or missing: ' + parsed.confidence);\n}\nif (!parsed.summary || typeof parsed.summary !== 'string' || parsed.summary.length === 0) {\n  throw new Error('summary missing or empty');\n}\nif (!allowedRisk.includes(parsed.risk)) {\n  throw new Error('risk not in allowed list: ' + parsed.risk);\n}\n\n// Safety override: high risk always forces human review, regardless of model output\nif (parsed.risk === 'high') {\n  parsed.needs_human = true;\n}\n// Low confidence also forces human review\nif (parsed.confidence < 0.6) {\n  parsed.needs_human = true;\n}\n\nreturn [{\n  json: {\n    request_id: fields.request_id,\n    message: fields.message,\n    received_at: fields.received_at,\n    category: parsed.category,\n    confidence: parsed.confidence,\n    summary: parsed.summary,\n    risk: parsed.risk,\n    needs_human: parsed.needs_human,\n    validation_status: 'valid'\n  }\n}];\n"
+      },
+      "id": "1a1e1f10-0004-4a11-9a11-000000000004",
+      "name": "04 Parse + validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ],
+      "notes": "Required keys, confidence 0-1, known category."
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "bbbb0001",
+              "name": "route",
+              "value": "={{$json.needs_human ? \"human_review\" : \"auto_tagged\"}}",
+              "type": "string"
+            },
+            {
+              "id": "bbbb0002",
+              "name": "queue",
+              "value": "={{$json.category}}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1a1e1f10-0005-4a11-9a11-000000000005",
+      "name": "05 Route",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        480,
+        0
+      ],
+      "notes": "Low confidence / high risk -> human review."
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cccc0001",
+              "name": "log_entry",
+              "value": "={{ { request_id: $json.request_id, received_at: $json.received_at, raw_output: { category: $json.category, confidence: $json.confidence, summary: $json.summary, risk: $json.risk, needs_human: $json.needs_human }, status: $json.route, queue: $json.queue, error: null } }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1a1e1f10-0006-4a11-9a11-000000000006",
+      "name": "06 Persist",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        700,
+        0
+      ],
+      "notes": "Append result, status, raw output, error."
+    }
+  ],
+  "connections": {
+    "01 Trigger": {
+      "main": [
+        [
+          {
+            "node": "02 Set fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 Set fields": {
+      "main": [
+        [
+          {
+            "node": "03 LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 LLM": {
+      "main": [
+        [
+          {
+            "node": "04 Parse + validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04 Parse + validate": {
+      "main": [
+        [
+          {
+            "node": "05 Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "05 Route": {
+      "main": [
+        [
+          {
+            "node": "06 Persist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "checkpoint01-ticket-triage-v0"
+  }
+}

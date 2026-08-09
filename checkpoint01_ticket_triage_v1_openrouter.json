@@ -1,0 +1,201 @@
+{
+  "name": "Checkpoint 01 - Ticket Triage v1 (OpenRouter, Test Ready, Error Paths)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "n1",
+      "name": "01 Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-600, 0],
+      "notes": "Manual trigger first; webhook after it works."
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            { "id": "a1", "name": "request_id", "value": "REQ-1001", "type": "string" },
+            { "id": "a2", "name": "received_at", "value": "={{$now.toISO()}}", "type": "string" },
+            { "id": "a3", "name": "message", "value": "I was charged twice this month for my subscription.", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n2",
+      "name": "02 Set fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-380, 0],
+      "notes": "Edit these 3 values per test case: request_id, received_at, message."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Guard: empty/missing message goes straight to error path, never hits the LLM\nconst f = $input.first().json;\nif (!f.message || typeof f.message !== 'string' || f.message.trim().length === 0) {\n  return [{ json: { ...f, skip_llm: true, validation_status: 'invalid', error: 'missing or empty message field' } }];\n}\nreturn [{ json: { ...f, skip_llm: false } }];\n"
+      },
+      "id": "n2b",
+      "name": "02b Input Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-160, 0],
+      "notes": "Catches empty/missing message before wasting an LLM call."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "leftValue": "", "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            { "leftValue": "={{$json.skip_llm}}", "rightValue": true, "operator": { "type": "boolean", "operation": "true" } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n2c",
+      "name": "IF Invalid Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [60, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "content-type", "value": "application/json" },
+            { "name": "HTTP-Referer", "value": "https://n8n.local" },
+            { "name": "X-Title", "value": "Checkpoint01-Ticket-Triage" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"anthropic/claude-sonnet-4.5\",\n  \"max_tokens\": 300,\n  \"messages\": [\n    { \"role\": \"system\", \"content\": \"JOB: Classify one support ticket into a routing decision.\\nCONTEXT: The ticket is a single free-text customer message. Allowed categories are billing, technical, account, spam, other.\\nRULES: Return ONLY valid JSON, no markdown fences, no prose. Never invent a category outside the allowed list. Prefer lower confidence over guessing.\\nTOOLS: None. Classification only, no external action.\\nOUTPUT: {\\\"category\\\": \\\"billing|technical|account|spam|other\\\", \\\"confidence\\\": <0.0-1.0>, \\\"summary\\\": \\\"<short line>\\\", \\\"risk\\\": \\\"low|medium|high\\\", \\\"needs_human\\\": <boolean>}\\nCHECK: Must parse as valid JSON, category from allowed list, confidence 0-1, summary non-empty.\" },\n    { \"role\": \"user\", \"content\": {{JSON.stringify($json.message)}} }\n  ]\n}",
+        "options": { "timeout": 15000 }
+      },
+      "id": "n3",
+      "name": "03 LLM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [280, -80],
+      "continueOnFail": true,
+      "notes": "OpenRouter (OpenAI-compatible /chat/completions). Contract prompt sent as system message. Credential: HTTP Header Auth, header name 'Authorization', value 'Bearer YOUR_OPENROUTER_KEY'. Swap 'model' to whichever OpenRouter model slug you have access to. 15s timeout; continueOnFail=true routes API/timeout failures to the error path instead of crashing."
+    },
+    {
+      "parameters": {
+        "jsCode": "// 04 Parse + validate - never throws, always returns a structured result\nconst item = $input.first();\nconst fields = $('02 Set fields').first().json;\nconst raw = item.json;\n\n// API/model failure or timeout (continueOnFail put the error here)\nif (item.error || raw.error) {\n  return [{ json: {\n    request_id: fields.request_id, received_at: fields.received_at, message: fields.message,\n    validation_status: 'invalid', error: 'API/model failure or timeout: ' + JSON.stringify(item.error || raw.error)\n  }}];\n}\n\nlet modelText;\ntry { modelText = raw.choices[0].message.content; }\ncatch (e) { return [{ json: { request_id: fields.request_id, received_at: fields.received_at, message: fields.message, validation_status: 'invalid', error: 'Unexpected API response shape' } }]; }\n\nlet parsed;\ntry { parsed = JSON.parse(modelText); }\ncatch (e) { return [{ json: { request_id: fields.request_id, received_at: fields.received_at, message: fields.message, validation_status: 'invalid', error: 'Invalid JSON from model: ' + modelText } }]; }\n\nconst requiredKeys = ['category','confidence','summary','risk','needs_human'];\nfor (const k of requiredKeys) {\n  if (!(k in parsed)) return [{ json: { request_id: fields.request_id, received_at: fields.received_at, message: fields.message, validation_status: 'invalid', error: 'Missing required key: ' + k } }];\n}\n\nconst allowedCategories = ['billing','technical','account','spam','other'];\nconst allowedRisk = ['low','medium','high'];\n\nif (!allowedCategories.includes(parsed.category)) return [{ json: { request_id: fields.request_id, received_at: fields.received_at, message: fields.message, validation_status: 'invalid', error: 'Unknown category: ' + parsed.category } }];\nif (typeof parsed.confidence !== 'number' || parsed.confidence < 0 || parsed.confidence > 1) return [{ json: { request_id: fields.request_id, received_at: fields.received_at, message: fields.message, validation_status: 'invalid', error: 'confidence out of range: ' + parsed.confidence } }];\nif (!parsed.summary) return [{ json: { request_id: fields.request_id, received_at: fields.received_at, message: fields.message, validation_status: 'invalid', error: 'summary missing' } }];\nif (!allowedRisk.includes(parsed.risk)) return [{ json: { request_id: fields.request_id, received_at: fields.received_at, message: fields.message, validation_status: 'invalid', error: 'Unknown risk value: ' + parsed.risk } }];\n\n// Safety overrides (hard-coded, not left to the model)\nif (parsed.risk === 'high') parsed.needs_human = true;\nif (parsed.confidence < 0.6) parsed.needs_human = true;\n\nreturn [{ json: {\n  request_id: fields.request_id, received_at: fields.received_at, message: fields.message,\n  category: parsed.category, confidence: parsed.confidence, summary: parsed.summary,\n  risk: parsed.risk, needs_human: parsed.needs_human, validation_status: 'valid', error: null\n}}];\n"
+      },
+      "id": "n4",
+      "name": "04 Parse + validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, -80],
+      "notes": "Required keys, confidence 0-1, known category. Returns structured result, never throws."
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            { "conditions": { "combinator": "and", "conditions": [ { "leftValue": "={{$json.validation_status}}", "rightValue": "invalid", "operator": { "type": "string", "operation": "equals" } } ] }, "renameOutput": true, "outputKey": "error" },
+            { "conditions": { "combinator": "and", "conditions": [ { "leftValue": "={{$json.needs_human}}", "rightValue": true, "operator": { "type": "boolean", "operation": "true" } } ] }, "renameOutput": true, "outputKey": "human_review" }
+          ]
+        },
+        "fallbackOutput": "extra",
+        "options": {}
+      },
+      "id": "n5",
+      "name": "05 Route",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [720, -80],
+      "notes": "Low confidence / high risk -> human review. Invalid -> error. Else -> auto_tagged (fallback output)."
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": { "assignments": [
+          { "id": "e1", "name": "route", "value": "error", "type": "string" }
+        ]},
+        "options": {}
+      },
+      "id": "n5err",
+      "name": "Tag: error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [940, -220]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": { "assignments": [
+          { "id": "h1", "name": "route", "value": "human_review", "type": "string" },
+          { "id": "h2", "name": "queue", "value": "={{$json.category}}", "type": "string" }
+        ]},
+        "options": {}
+      },
+      "id": "n5hr",
+      "name": "Tag: human_review",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [940, -80]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": { "assignments": [
+          { "id": "t1", "name": "route", "value": "auto_tagged", "type": "string" },
+          { "id": "t2", "name": "queue", "value": "={{$json.category}}", "type": "string" }
+        ]},
+        "options": {}
+      },
+      "id": "n5auto",
+      "name": "Tag: auto_tagged",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [940, 60]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": { "assignments": [
+          { "id": "c1", "name": "log_entry", "value": "={{ { request_id: $json.request_id, received_at: $json.received_at, raw_output: { category: $json.category || null, confidence: $json.confidence || null, summary: $json.summary || null, risk: $json.risk || null, needs_human: $json.needs_human || null }, status: $json.route, queue: $json.queue || null, error: $json.error || null } }}", "type": "object" }
+        ]},
+        "options": {}
+      },
+      "id": "n6",
+      "name": "06 Persist",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1160, -80],
+      "notes": "Append result, status, raw output, error. All three routes converge here."
+    }
+  ],
+  "connections": {
+    "01 Trigger": { "main": [[{ "node": "02 Set fields", "type": "main", "index": 0 }]] },
+    "02 Set fields": { "main": [[{ "node": "02b Input Guard", "type": "main", "index": 0 }]] },
+    "02b Input Guard": { "main": [[{ "node": "IF Invalid Input", "type": "main", "index": 0 }]] },
+    "IF Invalid Input": {
+      "main": [
+        [{ "node": "Tag: error", "type": "main", "index": 0 }],
+        [{ "node": "03 LLM", "type": "main", "index": 0 }]
+      ]
+    },
+    "03 LLM": { "main": [[{ "node": "04 Parse + validate", "type": "main", "index": 0 }]] },
+    "04 Parse + validate": { "main": [[{ "node": "05 Route", "type": "main", "index": 0 }]] },
+    "05 Route": {
+      "main": [
+        [{ "node": "Tag: error", "type": "main", "index": 0 }],
+        [{ "node": "Tag: human_review", "type": "main", "index": 0 }],
+        [{ "node": "Tag: auto_tagged", "type": "main", "index": 0 }]
+      ]
+    },
+    "Tag: error": { "main": [[{ "node": "06 Persist", "type": "main", "index": 0 }]] },
+    "Tag: human_review": { "main": [[{ "node": "06 Persist", "type": "main", "index": 0 }]] },
+    "Tag: auto_tagged": { "main": [[{ "node": "06 Persist", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "meta": { "instanceId": "checkpoint01-ticket-triage-v1" }
+}
