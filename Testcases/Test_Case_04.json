@@ -1,0 +1,18 @@
+[
+  {
+    "log_entry": {
+      "request_id": "REQ-1004",
+      "received_at": "2026-08-09T20:39:17.266+05:00",
+      "raw_output": {
+        "category": null,
+        "confidence": null,
+        "summary": null,
+        "risk": null,
+        "needs_human": null
+      },
+      "status": "error",
+      "queue": null,
+      "error": "missing or empty message field"
+    }
+  }
+]

@@ -1,0 +1,14 @@
+[
+  {
+    "request_id": "REQ-1003",
+    "received_at": "2026-08-09T20:37:22.379+05:00",
+    "message": "I'm contacting my lawyer about this fraudulent charge.",
+    "category": "billing",
+    "confidence": 0.95,
+    "summary": "Customer disputes charge as fraudulent, mentions legal action",
+    "risk": "high",
+    "needs_human": true,
+    "validation_status": "valid",
+    "error": null
+  }
+]

@@ -1,0 +1,14 @@
+[
+  {
+    "request_id": "REQ-1001",
+    "received_at": "2026-08-09T20:45:00.036+05:00",
+    "message": "I was charged twice this month for my subscription.",
+    "category": "billing",
+    "confidence": 0.95,
+    "summary": "Customer reports duplicate subscription charge",
+    "risk": "medium",
+    "needs_human": true,
+    "validation_status": "valid",
+    "error": null
+  }
+]

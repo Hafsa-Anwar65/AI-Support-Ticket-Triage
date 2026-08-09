@@ -1,0 +1,14 @@
+[
+  {
+    "request_id": "REQ-1002",
+    "received_at": "2026-08-09T20:33:23.584+05:00",
+    "message": "it's not working, please help",
+    "category": "technical",
+    "confidence": 0.6,
+    "summary": "Generic technical issue reported without details",
+    "risk": "medium",
+    "needs_human": true,
+    "validation_status": "valid",
+    "error": null
+  }
+]
