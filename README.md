@@ -1,6 +1,4 @@
-# 🎫 AI Ticket Triage — Checkpoint 01
-
-**AI Automation Mastery — Foundations, Setup & First Workflow**
+# 🎫 AI Ticket Triage Checkpoint 01
 
 An AI workflow that classifies support tickets, validates the model's output, routes risky/uncertain cases to a human, and never takes an autonomous customer-facing action.
 
@@ -194,4 +192,4 @@ README.md                                                     # this file
 
 ## ✍️ Author
 
-**Hafsa Anwat**
+**Hafsa Anwar**
