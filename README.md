@@ -12,7 +12,7 @@ An AI workflow that classifies support tickets, validates the model's output, ro
 | **Trigger** | Manual (v0/v1) → Webhook (planned) |
 | **Model Provider** | OpenRouter (OpenAI-compatible API) |
 | **Tool** | n8n |
-| **Status** | v1 — Test Ready |
+| **Status** | v1 - Test Ready |
 
 ---
 
